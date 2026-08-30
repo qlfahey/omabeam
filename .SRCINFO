@@ -1,6 +1,6 @@
 pkgbase = omabeam
 	pkgdesc = Your Omarchy desktop, on your phone — a live phone bridge for Omarchy (Hyprland)
-	pkgver = 0.2.0
+	pkgver = 0.3.0
 	pkgrel = 1
 	url = https://github.com/qlfahey/omabeam
 	arch = any
@@ -13,8 +13,9 @@ pkgbase = omabeam
 	depends = jq
 	optdepends = cloudflared: public URL via a Cloudflare tunnel (omabeam tunnel)
 	optdepends = qrencode: show a scan-to-open QR code in the terminal
+	optdepends = ngrok: free permanent link via omabeam setup
 	optdepends = omaspaces: open and save workspace layouts from the phone
-	source = omabeam-0.2.0.tar.gz::https://github.com/qlfahey/omabeam/archive/refs/tags/v0.2.0.tar.gz
+	source = omabeam-0.3.0.tar.gz::https://github.com/qlfahey/omabeam/archive/refs/tags/v0.3.0.tar.gz
 	sha256sums = SKIP
 
 pkgname = omabeam

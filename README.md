@@ -48,7 +48,7 @@ cd omabeam
 **Prebuilt package** (installs system-wide, pulls dependencies):
 
 ```bash
-sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.2.0/omabeam-0.2.0-1-any.pkg.tar.zst
+sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.3.0/omabeam-0.3.0-1-any.pkg.tar.zst
 ```
 
 Or build it yourself with `makepkg -si` (see [PKGBUILD](PKGBUILD)). AUR
@@ -81,10 +81,22 @@ notification, and `omabeam rotate` instantly kills the link and mints a new one.
 **Stay local instead:** `omabeam lan` serves only on your own network, never the
 internet.
 
-**Want a permanent address** (so the link never changes)? Set
-`OMABEAM_TUNNEL_TOKEN` to a Cloudflare [named-tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-token and omabeam routes through your own stable hostname; otherwise each run gets
-a fresh throwaway URL, so keep omabeam running (add it to autostart) to hold one.
+### A permanent link (static URL)
+
+A free throwaway tunnel gets a new URL each run. For a link you can bookmark once
+and reuse forever, run `omabeam setup` and pick one:
+
+- **ngrok** (recommended, free) — ngrok's free tier includes one reserved domain
+  (`name.ngrok-free.app`). `omabeam setup` fetches ngrok, saves your authtoken and
+  domain, and from then on `omabeam` serves `https://name.ngrok-free.app/?t=…`
+  every time.
+- **Cloudflare named tunnel** — a hostname on a domain you own
+  (`beam.yourdomain.com`). `omabeam setup` prints the one-time `cloudflared`
+  steps; set `TUNNEL_TOKEN` and `TUNNEL_HOSTNAME` and omabeam uses your hostname.
+
+Config lives in `~/.config/omabeam/config` (or set `OMABEAM_NGROK_DOMAIN` /
+`OMABEAM_TUNNEL_TOKEN` in the environment). Either way the address is stable, so
+you scan the QR once. Without setup, keep omabeam running to hold a temporary URL.
 
 ## How it works
 

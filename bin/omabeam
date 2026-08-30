@@ -6,6 +6,7 @@ share="$here/../share"
 [ -f "$share/omabeam-server.py" ] || share="/usr/share/omabeam"
 cache="$HOME/.cache/omabeam"; mkdir -p "$cache"
 sess="$cache/session"; pub="$cache/public"
+cfg="$HOME/.config/omabeam/config"; [ -f "$cfg" ] && . "$cfg"
 port="${OMABEAM_PORT:-8899}"
 STARTED=0
 
@@ -14,21 +15,27 @@ server_pid()   { ss -ltnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+'
 token()        { sed -n 2p "$sess" 2>/dev/null; }
 lan_url()      { sed -n 1p "$sess" 2>/dev/null; }
 qr()           { command -v qrencode >/dev/null && qrencode -t ANSIUTF8 -m 2 "$1" || true; }
+goarch()       { case "$(uname -m)" in x86_64) echo amd64;; aarch64|arm64) echo arm64;; *) echo amd64;; esac; }
 
-cfbin() {
+ensure_cloudflared() {
   command -v cloudflared >/dev/null && { command -v cloudflared; return; }
   [ -x "$HOME/.local/bin/cloudflared" ] && { echo "$HOME/.local/bin/cloudflared"; return; }
-  echo ""
-}
-ensure_cloudflared() {
-  local b; b="$(cfbin)"; [ -n "$b" ] && { echo "$b"; return; }
-  local arch; case "$(uname -m)" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; *) arch=amd64;; esac
   echo "omabeam: fetching cloudflared (one time)…" >&2
   mkdir -p "$HOME/.local/bin"
   curl -fsSL -o "$HOME/.local/bin/cloudflared" \
-    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch" >&2 \
-    || { echo "omabeam: could not download cloudflared — install it and retry." >&2; return 1; }
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(goarch)" >&2 \
+    || { echo "omabeam: could not download cloudflared." >&2; return 1; }
   chmod +x "$HOME/.local/bin/cloudflared"; echo "$HOME/.local/bin/cloudflared"
+}
+ensure_ngrok() {
+  command -v ngrok >/dev/null && { command -v ngrok; return; }
+  [ -x "$HOME/.local/bin/ngrok" ] && { echo "$HOME/.local/bin/ngrok"; return; }
+  echo "omabeam: fetching ngrok (one time)…" >&2
+  local t; t="$(mktemp)"
+  curl -fsSL -o "$t" "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-$(goarch).tgz" >&2 \
+    || { echo "omabeam: could not download ngrok." >&2; rm -f "$t"; return 1; }
+  mkdir -p "$HOME/.local/bin"; tar -xzf "$t" -C "$HOME/.local/bin" ngrok 2>/dev/null; rm -f "$t"
+  chmod +x "$HOME/.local/bin/ngrok"; echo "$HOME/.local/bin/ngrok"
 }
 
 start_server_bg() {
@@ -41,32 +48,89 @@ start_server_bg() {
 cleanup() { [ "$STARTED" = 1 ] && { p="$(server_pid)"; [ -n "${p:-}" ] && kill "$p" 2>/dev/null || true; }; }
 
 anywhere() {
-  rm -f "$pub"
-  start_server_bg
-  trap cleanup EXIT INT TERM
-  echo "omabeam: on your network →  $(lan_url)"
-  echo
-  echo "Opening a secure public link so you can use it from anywhere."
-  echo "It's protected by a token — treat the link like a password. Revoke anytime: omabeam rotate"
-  echo
-  local cf tok; cf="$(ensure_cloudflared)" || exit 1; tok="$(token)"
-  if [ -n "${OMABEAM_TUNNEL_TOKEN:-}" ]; then
-    echo "omabeam: starting your named tunnel (stable hostname you control)…"
-    exec "$cf" tunnel run --token "$OMABEAM_TUNNEL_TOKEN"
+  rm -f "$pub"; start_server_bg; trap cleanup EXIT INT TERM
+  echo "omabeam: on your network →  $(lan_url)"; echo
+  local tok; tok="$(token)"
+
+  # 1) Cloudflare named tunnel — permanent hostname you own
+  local cft="${OMABEAM_TUNNEL_TOKEN:-${TUNNEL_TOKEN:-}}"
+  if [ -n "$cft" ]; then
+    local host="${OMABEAM_TUNNEL_HOSTNAME:-${TUNNEL_HOSTNAME:-}}"
+    if [ -n "$host" ]; then
+      printf 'https://%s/?t=%s\n' "$host" "$tok" > "$pub"
+      echo "omabeam: permanent link →  https://$host/?t=$tok"; qr "https://$host/?t=$tok"
+    else
+      echo "omabeam: running your named tunnel (set TUNNEL_HOSTNAME in $cfg to print the link + QR)."
+    fi
+    exec "$(ensure_cloudflared)" tunnel run --token "$cft"
   fi
+
+  # 2) ngrok reserved domain — free static URL
+  local ngd="${OMABEAM_NGROK_DOMAIN:-${NGROK_DOMAIN:-}}"
+  if [ -n "$ngd" ]; then
+    local ng; ng="$(ensure_ngrok)" || exit 1
+    printf 'https://%s/?t=%s\n' "$ngd" "$tok" > "$pub"
+    echo "omabeam: permanent link →  https://$ngd/?t=$tok"; qr "https://$ngd/?t=$tok"
+    exec "$ng" http --url="https://$ngd" "$port" --log=stderr
+  fi
+
+  # 3) quick tunnel — works anywhere, but the URL changes each run
+  echo "Opening a temporary public link (token-protected). For a link that never"
+  echo "changes, run:  omabeam setup"; echo
+  local cf; cf="$(ensure_cloudflared)" || exit 1
   "$cf" tunnel --url "http://localhost:$port" 2>&1 | while read -r line; do
     u="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' <<<"$line" || true)"
     if [ -n "$u" ]; then
       printf '%s/?t=%s\n' "$u" "$tok" > "$pub"
-      echo "omabeam: reachable anywhere →  $u/?t=$tok"
-      qr "$u/?t=$tok"
+      echo "omabeam: reachable anywhere →  $u/?t=$tok"; qr "$u/?t=$tok"
       command -v notify-send >/dev/null && notify-send "omabeam" "Anywhere link ready" || true
     fi
   done
 }
 
+setup() {
+  mkdir -p "$(dirname "$cfg")"
+  echo "omabeam setup — a permanent link that never changes."
+  echo
+  echo "  1) ngrok — free reserved domain, easiest (recommended)"
+  echo "  2) Cloudflare named tunnel — a hostname on a domain you own"
+  read -rp "Choose 1 or 2: " choice
+  case "$choice" in
+    1)
+      local ng; ng="$(ensure_ngrok)" || exit 1
+      echo
+      echo "a) Sign in (free) at https://dashboard.ngrok.com"
+      echo "b) Copy your authtoken (Getting Started → Your Authtoken)"
+      read -rp "   Paste authtoken: " tk
+      "$ng" config add-authtoken "$tk"
+      echo "c) Claim your free domain at https://dashboard.ngrok.com/domains"
+      echo "   (it looks like  something.ngrok-free.app )"
+      read -rp "   Paste that domain: " dom
+      { echo "# omabeam remote config"; printf 'NGROK_DOMAIN=%q\n' "$dom"; } > "$cfg"
+      echo
+      echo "Done. Your permanent link is  https://$dom/?t=<token>"
+      echo "Run 'omabeam' any time — same link, forever. 'omabeam qr' shows it."
+      ;;
+    2)
+      local cf; cf="$(ensure_cloudflared)" || exit 1
+      echo
+      echo "One-time (needs a domain on your Cloudflare account):"
+      echo "  $cf tunnel login"
+      echo "  $cf tunnel create omabeam"
+      echo "  $cf tunnel route dns omabeam beam.YOURDOMAIN.com"
+      echo "Grab the tunnel token from the Cloudflare dashboard, then write to $cfg:"
+      echo "  TUNNEL_TOKEN=<token>"
+      echo "  TUNNEL_HOSTNAME=beam.YOURDOMAIN.com"
+      echo
+      echo "Then 'omabeam' uses your permanent hostname."
+      ;;
+    *) echo "omabeam: nothing chosen."; exit 1 ;;
+  esac
+}
+
 case "${1:-anywhere}" in
   anywhere) anywhere ;;
+  setup)    setup ;;
   lan)
     ensure_input
     pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid" 2>/dev/null || true; sleep 1; }
@@ -78,7 +142,7 @@ case "${1:-anywhere}" in
     printf 'omabeam\n%s\n' "$(python3 -c 'import secrets;print(secrets.token_urlsafe(16))')" > "$sess"
     chmod 600 "$sess"; rm -f "$pub"
     pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid" 2>/dev/null || true; sleep 1; }
-    echo "omabeam: link rotated — every old link is dead. Run 'omabeam' for a fresh one."
+    echo "omabeam: token rotated — every old link is dead. Run 'omabeam' for a fresh one."
     ;;
   stop)
     pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid"; echo "omabeam: stopped."; } || echo "omabeam: not running."
@@ -91,15 +155,16 @@ case "${1:-anywhere}" in
 omabeam — your Omarchy desktop, on your phone (from anywhere)
 
   omabeam            start and print a secure link that works anywhere (+ QR)
+  omabeam setup      configure a PERMANENT link that never changes (ngrok / Cloudflare)
   omabeam qr         reprint the current link + QR
   omabeam url        print the current link
   omabeam lan        local network only (no public link)
   omabeam rotate     revoke the current link (new token) and restart fresh
   omabeam stop       stop the server
 
-The link carries a token — treat it like a password. 'omabeam rotate' is your
-revoke button. For a permanent address, set OMABEAM_TUNNEL_TOKEN to a Cloudflare
-named-tunnel token and omabeam will use your own stable hostname.
+Without setup, each run gets a fresh temporary URL. After 'omabeam setup' the
+link is permanent — bookmark it once. The link carries a token; treat it like a
+password, and 'omabeam rotate' revokes it.
 USAGE
     ;;
   *) echo "omabeam: unknown command '$1' (try 'omabeam --help')" >&2; exit 2 ;;

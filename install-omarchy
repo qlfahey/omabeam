@@ -1,0 +1,34 @@
+#!/bin/bash
+set -euo pipefail
+
+src="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+prefix="$HOME/.local"
+
+echo "Installing omabeam into $prefix"
+
+deps=(python grim ydotool wtype hyprland jq)
+missing=()
+for d in "${deps[@]}"; do command -v "$d" >/dev/null 2>&1 || missing+=("$d"); done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "Missing: ${missing[*]}"
+  if command -v omarchy >/dev/null 2>&1; then
+    omarchy pkg add "${missing[@]}" || echo "Install them and re-run."
+  else
+    echo "Install them with your package manager and re-run."
+  fi
+fi
+
+install -Dm755 "$src/bin/omabeam" "$prefix/bin/omabeam"
+install -Dm644 "$src/share/omabeam-server.py" "$prefix/share/omabeam/omabeam-server.py"
+install -Dm644 "$src/share/phone.html" "$prefix/share/omabeam/phone.html"
+
+echo
+echo "Installed. Make sure $prefix/bin is on your PATH."
+echo
+echo "One-time input setup (lets touch/keyboard reach the desktop):"
+echo "  echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' | sudo tee /etc/udev/rules.d/60-omabeam-uinput.rules"
+echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
+echo "  sudo usermod -aG input \"$USER\"   # then log out and back in"
+echo
+echo "Run:  omabeam         (LAN URL)"
+echo "      omabeam tunnel  (public URL via cloudflared)"

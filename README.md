@@ -30,9 +30,10 @@ it feels like the desktop, not a web page.
 ## Works with omaspaces
 
 [omaspaces](https://github.com/qlfahey/omaspaces) is a separate tool — a window
-layout builder and dock for Omarchy. If it's installed, omabeam adds a **Spaces**
-section that opens and saves your omaspaces layouts. omabeam works fine without
-it; the section just won't appear.
+layout builder and dock for Omarchy. If it's installed, omabeam's **Spaces** menu
+gains a mobile **workspace builder**: pick a template, tap tiles to assign apps,
+and Save / Save & Apply — plus open, save-current, and delete your saved layouts,
+all from the phone. omabeam works fine without it; the section just won't appear.
 
 ## Install
 
@@ -48,7 +49,7 @@ cd omabeam
 **Prebuilt package** (installs system-wide, pulls dependencies):
 
 ```bash
-sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.3.1/omabeam-0.3.1-1-any.pkg.tar.zst
+sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.4.0/omabeam-0.4.0-1-any.pkg.tar.zst
 ```
 
 Or build it yourself with `makepkg -si` (see [PKGBUILD](PKGBUILD)). AUR

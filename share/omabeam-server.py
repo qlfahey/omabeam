@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import http.server, json, subprocess, secrets, socket, urllib.parse, time, os, re, glob, shlex, shutil, hmac, sys
 
-VERSION = "0.3.1"
+VERSION = "0.4.0"
 PORT = int(os.environ.get("OMABEAM_PORT", "8899"))
 URLFILE = os.path.expanduser("~/.cache/omabeam/session")
 os.makedirs(os.path.dirname(URLFILE), exist_ok=True)
@@ -335,6 +335,7 @@ def menu_tree():
     out.append({"id": "spaces", "parent": "root", "kind": "menu", "icon": "\U000f00c8", "iconFont": "", "label": "Spaces", "target": "", "action": "", "provider": "", "checked": False})
     out.append({"id": "spaces.fullcontrol", "parent": "spaces", "kind": "action", "icon": "\U000f0379", "iconFont": "", "label": "Full desktop control", "target": "", "action": "app:fullcontrol", "provider": "", "checked": False})
     if HAS_OMASPACES:
+        out.append({"id": "spaces.build", "parent": "spaces", "kind": "action", "icon": "\U000f0b4c", "iconFont": "", "label": "Build a workspace", "target": "", "action": "app:build", "provider": "", "checked": False})
         for l in layouts():
             out.append({"id": "spaces.layout." + l["name"], "parent": "spaces", "kind": "action", "icon": "\U000f04ac", "iconFont": "",
                         "label": "Open " + l["name"], "target": "", "action": "omaspaces apply " + shlex.quote(l["name"]),
@@ -364,6 +365,27 @@ def menu_run(idv):
         try: subprocess.Popen(["bash", "-lc", action], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         except Exception: pass
 
+def apps_json():
+    try:
+        return json.loads(sh_out("omaspaces", "apps", "--json"))
+    except Exception:
+        return []
+
+def build_layout(name, tiles_json, apply):
+    try:
+        tiles = json.loads(tiles_json)
+    except Exception:
+        return
+    doc = json.dumps({"name": name, "tiles": tiles})
+    sh = 'printf %s "$1" | omaspaces import "$2" -'
+    if apply:
+        sh += ' && omaspaces apply "$2"'
+    try:
+        subprocess.Popen(["bash", "-lc", sh, "omabeam", doc, name],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception:
+        pass
+
 PAGE = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "phone.html")).read()
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -389,6 +411,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if u.path == "/api/theme": return self.send(200 if self.ok(q) else 403, theme() if self.ok(q) else {"error": "token"})
         if u.path == "/api/themes": return self.send(200 if self.ok(q) else 403, themes() if self.ok(q) else {"error": "token"})
         if u.path == "/api/layouts": return self.send(200 if self.ok(q) else 403, layouts() if self.ok(q) else {"error": "token"})
+        if u.path == "/api/apps": return self.send(200 if self.ok(q) else 403, apps_json() if self.ok(q) else {"error": "token"})
         if u.path == "/api/menu": return self.send(200 if self.ok(q) else 403, menu_tree() if self.ok(q) else {"error": "token"})
         if u.path == "/font":
             if not self.ok(q): return self.send(403, {"error": "token"})
@@ -467,6 +490,12 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.send(200, {"ok": True})
         if u.path == "/api/menurun":
             if g("id"): menu_run(g("id"))
+            return self.send(200, {"ok": True})
+        if u.path == "/api/buildlayout":
+            if g("name") and g("tiles"): build_layout(g("name"), g("tiles"), g("apply") == "1")
+            return self.send(200, {"ok": True})
+        if u.path == "/api/rmlayout":
+            if g("name"): sh("omaspaces", "rm", g("name"))
             return self.send(200, {"ok": True})
         self.send(404, {"error": "nope"})
 

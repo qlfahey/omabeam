@@ -75,6 +75,17 @@ body.bigov #wlist{display:none}
 .key{flex:1 1 0;height:42px;border-radius:8px;background:var(--card2);border:1px solid var(--line);color:var(--ink);
  display:flex;align-items:center;justify-content:center;font-size:16px;min-width:0}
 .key:active,.key.on{background:var(--acc);color:var(--bg)}.key.w15{flex:1.5}.key.sp{font-size:11px;color:var(--dim)}
+.bscroll{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 12px calc(env(safe-area-inset-bottom) + 16px)}
+.bsec{margin-top:14px}
+.brow{display:flex;flex-wrap:wrap;gap:8px}
+.bpill{height:38px;padding:0 14px;border-radius:11px;background:var(--card2);border:1px solid var(--line);color:var(--ink);font-size:14px;font-family:var(--font)}
+.bpill.on{background:var(--acc);border-color:var(--acc);color:var(--bg)}
+.bpill.acc{background:var(--acc);border-color:var(--acc);color:var(--bg);font-weight:600}
+.bcanvas{position:relative;width:100%;aspect-ratio:16/9;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-top:8px;overflow:hidden}
+.btile{position:absolute;border:1px solid var(--line);border-radius:8px;background:var(--card2);display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;color:var(--ink);padding:4px;box-sizing:border-box;overflow:hidden}
+.btile .dim{color:var(--dim)}
+.pickover{position:absolute;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:10}
+.pickover.on{display:flex}
 </style></head><body>
 
 <div id=over class="view on">
@@ -98,6 +109,22 @@ body.bigov #wlist{display:none}
   <button class=tbtn id=tMove>Move</button>
   <button class=tbtn id=kbToggle>Keyboard</button>
   <span class=grow></span><span class=hintline id=fhint>tap · hold · scroll</span></div>
+</div>
+
+<div id=builder class=view>
+ <div class=bar><button class=back id=bback>‹ Spaces</button><span class=app>Build a workspace</span></div>
+ <div class=bscroll>
+  <div class=bsec><div class=cap>Layout</div><div class=brow id=btpl></div></div>
+  <div class=bsec><div class=cap>Tiles — tap a tile to assign an app</div><div class=bcanvas id=bcanvas></div></div>
+  <div class=bsec><input class=search id=bname placeholder="workspace name" autocomplete=off autocapitalize=off>
+   <div class=brow style="margin-top:10px"><button class=bpill id=bsaveBtn>Save</button><button class="bpill acc" id=bapplyBtn>Save &amp; Apply</button></div></div>
+  <div class=bsec><div class=cap>Saved layouts</div><div id=blist></div></div>
+ </div>
+ <div id=bpick class=pickover>
+  <div class=bar><button class=back id=bpback>‹</button><span class=app>Choose an app</span></div>
+  <input class=search id=bpsearch placeholder="Search apps" autocomplete=off autocapitalize=off>
+  <div class=mlist id=bpapps></div>
+ </div>
 </div>
 
 <script>
@@ -177,6 +204,7 @@ function tapRow(r){
  if(hasKids(r)&&!r.action){nav.push(tgtOf(r));msearch='';$('msearch').value='';renderMenu();return;}
  if(r.action==='app:save'){saveLayout();return;}
  if(r.action==='app:fullcontrol'){closeMenu();openDesktop();return;}
+ if(r.action==='app:build'){closeMenu();openBuilder();return;}
  post('/api/menurun?id='+enc(r.id));toast(r.label);
  if(r.id.indexOf('style.theme.')===0){setTimeout(()=>{applyTheme();loadMenu();},1500);}
  else if(r.id==='style.background'){/* stay */}
@@ -267,4 +295,40 @@ function render(){kbd.innerHTML='';const util=['esc','tab','ctrl','alt','super',
  const r=document.createElement('div');r.className='krow';r.appendChild(keyEl(sym?'ABC':'123','w15'));r.appendChild(keyEl('space'));r.appendChild(keyEl('⏎','w15'));kbd.appendChild(r);}
 $('kbToggle').addEventListener('click',()=>{const show=kbd.classList.contains('hide');kbd.classList.toggle('hide',!show);
  $('kbToggle').classList.toggle('on',show);if(show&&!kbd.dataset.b){render();kbd.dataset.b='1';}reshapeSoon();});
+/* ---- mobile workspace builder ---- */
+const TPL={
+ single:{label:'Single',t:[[0,0,1,1]]},
+ cols2:{label:'2 Columns',t:[[0,0,.5,1],[.5,0,.5,1]]},
+ cols3:{label:'3 Columns',t:[[0,0,.34,1],[.34,0,.33,1],[.67,0,.33,1]]},
+ main:{label:'Main + Stack',t:[[0,0,.6,1],[.6,0,.4,.5],[.6,.5,.4,.5]]},
+ grid:{label:'Grid 2×2',t:[[0,0,.5,.5],[.5,0,.5,.5],[0,.5,.5,.5],[.5,.5,.5,.5]]}
+};
+let bTpl='cols2',bTiles=[],bApps=[],bPickIdx=-1;
+async function openBuilder(){$('over').classList.remove('on');$('menu').classList.remove('on');$('focus').classList.remove('on');
+ $('builder').classList.add('on');bApps=await getj('/api/apps')||[];selTpl('cols2');loadBLayouts();}
+function selTpl(k){bTpl=k;bTiles=TPL[k].t.map(()=>null);
+ $('btpl').innerHTML=Object.keys(TPL).map(x=>`<button class="bpill ${x===bTpl?'on':''}" onclick="selTpl('${x}')">${TPL[x].label}</button>`).join('');
+ renderCanvas();}
+function renderCanvas(){$('bcanvas').innerHTML=TPL[bTpl].t.map((r,i)=>{const a=bTiles[i];
+ return `<div class=btile style="left:${r[0]*100}%;top:${r[1]*100}%;width:${r[2]*100}%;height:${r[3]*100}%" onclick="pickApp(${i})">${a?escapeHtml(a.name):'<span class=dim>+ app</span>'}</div>`;}).join('');}
+function pickApp(i){bPickIdx=i;$('bpsearch').value='';renderPick('');$('bpick').classList.add('on');}
+function renderPick(q){q=(q||'').toLowerCase();const rows=bApps.filter(a=>(a.name||'').toLowerCase().includes(q)).slice(0,150);
+ $('bpapps').innerHTML=rows.length?rows.map(a=>`<div class=mrow onclick="assignApp('${escapeHtml(a.id)}')"><span class=tx>${escapeHtml(a.name)}</span></div>`).join(''):'<div class=empty>No matches</div>';}
+function assignApp(id){const a=bApps.find(x=>x.id===id);if(a&&bPickIdx>=0)bTiles[bPickIdx]=a;$('bpick').classList.remove('on');renderCanvas();}
+$('bpback').onclick=()=>$('bpick').classList.remove('on');
+$('bpsearch').addEventListener('input',e=>renderPick(e.target.value.trim()));
+$('bback').onclick=()=>{$('builder').classList.remove('on');$('over').classList.add('on');loadState();};
+function classOf(a){return (a.wmclass&&a.wmclass.length)?a.wmclass:((a.exec||'').split(' ')[0].split('/').pop()||'').toLowerCase();}
+function buildTiles(){return TPL[bTpl].t.map((r,i)=>({a:bTiles[i],r})).filter(x=>x.a)
+ .map(x=>({exec:x.a.exec,match:'class:'+classOf(x.a),region:x.r}));}
+function saveBuild(apply){const name=$('bname').value.trim();if(!name){toast('Name it first');return;}
+ const tiles=buildTiles();if(!tiles.length){toast('Assign at least one app');return;}
+ post(`/api/buildlayout?name=${enc(name)}&apply=${apply?1:0}&tiles=${enc(JSON.stringify(tiles))}`);
+ toast(apply?('Building '+name+'…'):('Saved '+name));setTimeout(loadBLayouts,800);
+ if(apply){setTimeout(()=>{$('bback').onclick();},900);}}
+$('bsaveBtn').onclick=()=>saveBuild(false);$('bapplyBtn').onclick=()=>saveBuild(true);
+async function loadBLayouts(){const L=await getj('/api/layouts')||[];
+ $('blist').innerHTML=L.length?L.map(l=>`<div class=wrow><div class=wt onclick="applyB('${escapeHtml(l.name)}')"><b>${escapeHtml(l.name)}</b><span>${l.tiles} tiles</span></div><button class="wact danger" onclick="delB('${escapeHtml(l.name)}')">✕</button></div>`).join(''):'<div class=wempty>No saved layouts yet</div>';}
+function applyB(n){post('/api/apply?name='+enc(n));toast('Applying '+n+'…');}
+function delB(n){post('/api/rmlayout?name='+enc(n));toast('Deleted '+n);setTimeout(loadBLayouts,400);}
 </script></body></html>

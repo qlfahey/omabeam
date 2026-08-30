@@ -6,7 +6,9 @@ share="$here/../share"
 [ -f "$share/omabeam-server.py" ] || share="/usr/share/omabeam"
 cache="$HOME/.cache/omabeam"; mkdir -p "$cache"
 sess="$cache/session"; pub="$cache/public"
-cfg="$HOME/.config/omabeam/config"; [ -f "$cfg" ] && . "$cfg"
+cfg="$HOME/.config/omabeam/config"
+# Runtime commands read the saved config; setup/provision must not be shadowed by it.
+case "${1:-anywhere}" in setup|provision) : ;; *) [ -f "$cfg" ] && . "$cfg" ;; esac
 port="${OMABEAM_PORT:-8899}"
 STARTED=0
 
@@ -88,42 +90,76 @@ anywhere() {
   done
 }
 
+save_cfg() { mkdir -p "$(dirname "$cfg")"; { echo "# omabeam remote config"; printf '%s\n' "$@"; } > "$cfg"; }
+
+# Fully automated Cloudflare tunnel from one API token — no dashboard, no prompts.
+provision_cloudflare() {
+  : "${CF_API_TOKEN:?set CF_API_TOKEN}"; : "${CF_ZONE:?set CF_ZONE (a domain on your Cloudflare account)}"
+  local host="${CF_HOSTNAME:-beam.$CF_ZONE}" api="https://api.cloudflare.com/client/v4"
+  local A=(-H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json")
+  local acct zone tid tok sec
+  acct="$(curl -fsS "${A[@]}" "$api/accounts" | jq -r '.result[0].id // empty')"
+  zone="$(curl -fsS "${A[@]}" "$api/zones?name=$CF_ZONE" | jq -r '.result[0].id // empty')"
+  [ -n "$acct" ] && [ -n "$zone" ] || { echo "omabeam: API token can't see your account/zone ($CF_ZONE)." >&2; return 1; }
+  sec="$(python3 -c 'import secrets,base64;print(base64.b64encode(secrets.token_bytes(32)).decode())')"
+  tid="$(curl -fsS "${A[@]}" -X POST "$api/accounts/$acct/cfd_tunnel" \
+        --data "{\"name\":\"omabeam\",\"tunnel_secret\":\"$sec\",\"config_src\":\"cloudflare\"}" | jq -r '.result.id // empty')"
+  [ -n "$tid" ] || { echo "omabeam: tunnel create failed." >&2; return 1; }
+  tok="$(curl -fsS "${A[@]}" "$api/accounts/$acct/cfd_tunnel/$tid/token" | jq -r '.result // empty')"
+  curl -fsS "${A[@]}" -X PUT "$api/accounts/$acct/cfd_tunnel/$tid/configurations" \
+    --data "{\"config\":{\"ingress\":[{\"hostname\":\"$host\",\"service\":\"http://localhost:$port\"},{\"service\":\"http_status:404\"}]}}" >/dev/null
+  curl -fsS "${A[@]}" -X POST "$api/zones/$zone/dns_records" \
+    --data "{\"type\":\"CNAME\",\"name\":\"$host\",\"content\":\"$tid.cfargotunnel.com\",\"proxied\":true}" >/dev/null
+  save_cfg "$(printf 'TUNNEL_TOKEN=%q' "$tok")" "$(printf 'TUNNEL_HOSTNAME=%q' "$host")"
+  echo "omabeam: provisioned. Permanent link → https://$host/?t=$(token). Run 'omabeam'."
+}
+
 setup() {
-  mkdir -p "$(dirname "$cfg")"
+  # Non-interactive when credentials are supplied — agent- and script-drivable.
+  if [ -n "${CF_API_TOKEN:-}" ] && [ -n "${CF_ZONE:-}" ]; then provision_cloudflare; return; fi
+  if [ -n "${TUNNEL_TOKEN:-${OMABEAM_TUNNEL_TOKEN:-}}" ]; then
+    save_cfg "$(printf 'TUNNEL_TOKEN=%q' "${TUNNEL_TOKEN:-$OMABEAM_TUNNEL_TOKEN}")" \
+             ${TUNNEL_HOSTNAME:+"$(printf 'TUNNEL_HOSTNAME=%q' "$TUNNEL_HOSTNAME")"}
+    echo "omabeam: Cloudflare named tunnel configured."; return
+  fi
+  if [ -n "${NGROK_AUTHTOKEN:-}" ]; then
+    "$(ensure_ngrok)" config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null
+    save_cfg ${NGROK_DOMAIN:+"$(printf 'NGROK_DOMAIN=%q' "$NGROK_DOMAIN")"}
+    echo "omabeam: ngrok configured${NGROK_DOMAIN:+ — permanent link https://$NGROK_DOMAIN/?t=$(token)}."
+    return
+  fi
+  if [ ! -t 0 ]; then
+    cat <<EOF
+omabeam setup needs credentials once (accounts can't be created headless). Then
+everything is automatic — no dashboard, no prompts. Pick one:
+
+  # Cloudflare: from ONE API token, omabeam creates the tunnel + DNS for you.
+  CF_API_TOKEN=... CF_ZONE=yourdomain.com [CF_HOSTNAME=beam.yourdomain.com] omabeam setup
+
+  # ngrok: paste an authtoken (+ your reserved free domain)
+  NGROK_AUTHTOKEN=... NGROK_DOMAIN=name.ngrok-free.app omabeam setup
+
+  # Or a tunnel token you already have
+  TUNNEL_TOKEN=... TUNNEL_HOSTNAME=beam.yourdomain.com omabeam setup
+EOF
+    return
+  fi
+  # Interactive fallback.
   echo "omabeam setup — a permanent link that never changes."
-  echo
-  echo "  1) ngrok — free reserved domain, easiest (recommended)"
-  echo "  2) Cloudflare named tunnel — a hostname on a domain you own"
+  echo "  1) Cloudflare (automatic, needs an API token + a domain on Cloudflare)"
+  echo "  2) ngrok (free reserved domain)"
   read -rp "Choose 1 or 2: " choice
   case "$choice" in
-    1)
-      local ng; ng="$(ensure_ngrok)" || exit 1
-      echo
-      echo "a) Sign in (free) at https://dashboard.ngrok.com"
-      echo "b) Copy your authtoken (Getting Started → Your Authtoken)"
-      read -rp "   Paste authtoken: " tk
-      "$ng" config add-authtoken "$tk"
-      echo "c) Claim your free domain at https://dashboard.ngrok.com/domains"
-      echo "   (it looks like  something.ngrok-free.app )"
-      read -rp "   Paste that domain: " dom
-      { echo "# omabeam remote config"; printf 'NGROK_DOMAIN=%q\n' "$dom"; } > "$cfg"
-      echo
-      echo "Done. Your permanent link is  https://$dom/?t=<token>"
-      echo "Run 'omabeam' any time — same link, forever. 'omabeam qr' shows it."
-      ;;
-    2)
-      local cf; cf="$(ensure_cloudflared)" || exit 1
-      echo
-      echo "One-time (needs a domain on your Cloudflare account):"
-      echo "  $cf tunnel login"
-      echo "  $cf tunnel create omabeam"
-      echo "  $cf tunnel route dns omabeam beam.YOURDOMAIN.com"
-      echo "Grab the tunnel token from the Cloudflare dashboard, then write to $cfg:"
-      echo "  TUNNEL_TOKEN=<token>"
-      echo "  TUNNEL_HOSTNAME=beam.YOURDOMAIN.com"
-      echo
-      echo "Then 'omabeam' uses your permanent hostname."
-      ;;
+    1) read -rp "Cloudflare API token: " CF_API_TOKEN; read -rp "Your domain (zone): " CF_ZONE
+       read -rp "Hostname [beam.$CF_ZONE]: " CF_HOSTNAME; export CF_API_TOKEN CF_ZONE CF_HOSTNAME
+       provision_cloudflare ;;
+    2) local ng; ng="$(ensure_ngrok)" || exit 1
+       echo "Sign in free at https://dashboard.ngrok.com, then paste your authtoken."
+       read -rp "authtoken: " tk; "$ng" config add-authtoken "$tk" >/dev/null
+       echo "Claim your free domain at https://dashboard.ngrok.com/domains."
+       read -rp "domain (name.ngrok-free.app): " dom
+       save_cfg "$(printf 'NGROK_DOMAIN=%q' "$dom")"
+       echo "Done. Permanent link → https://$dom/?t=$(token)" ;;
     *) echo "omabeam: nothing chosen."; exit 1 ;;
   esac
 }
@@ -131,6 +167,7 @@ setup() {
 case "${1:-anywhere}" in
   anywhere) anywhere ;;
   setup)    setup ;;
+  provision) provision_cloudflare ;;
   lan)
     ensure_input
     pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid" 2>/dev/null || true; sleep 1; }

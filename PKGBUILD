@@ -1,6 +1,6 @@
 # Maintainer: qlfahey
 pkgname=omabeam
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="Your Omarchy desktop, on your phone — a live phone bridge for Omarchy (Hyprland)"
 arch=('any')

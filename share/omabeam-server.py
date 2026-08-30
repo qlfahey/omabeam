@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import http.server, json, subprocess, secrets, socket, urllib.parse, time, os, re, glob, shlex, shutil, hmac, sys
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 PORT = int(os.environ.get("OMABEAM_PORT", "8899"))
 URLFILE = os.path.expanduser("~/.cache/omabeam/session")
 os.makedirs(os.path.dirname(URLFILE), exist_ok=True)

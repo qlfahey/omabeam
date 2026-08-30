@@ -48,7 +48,7 @@ cd omabeam
 **Prebuilt package** (installs system-wide, pulls dependencies):
 
 ```bash
-sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.3.0/omabeam-0.3.0-1-any.pkg.tar.zst
+sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.3.1/omabeam-0.3.1-1-any.pkg.tar.zst
 ```
 
 Or build it yourself with `makepkg -si` (see [PKGBUILD](PKGBUILD)). AUR

@@ -48,7 +48,7 @@ cd omabeam
 **Prebuilt package** (installs system-wide, pulls dependencies):
 
 ```bash
-sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.1.0/omabeam-0.1.0-1-any.pkg.tar.zst
+sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.2.0/omabeam-0.2.0-1-any.pkg.tar.zst
 ```
 
 Or build it yourself with `makepkg -si` (see [PKGBUILD](PKGBUILD)). AUR
@@ -64,13 +64,27 @@ log out and back in once). The prebuilt package prints the same steps.
 ## Use
 
 ```bash
-omabeam            # start the server, print the LAN URL to open on your phone
-omabeam tunnel     # also open a Cloudflare tunnel and print a public URL
-omabeam url        # show the current URL
+omabeam            # start and show a secure link that works ANYWHERE (+ QR)
+omabeam qr         # reprint the current link + QR
+omabeam url        # print the current link
+omabeam lan        # local network only (no public link)
+omabeam rotate     # revoke the current link (new token) and restart fresh
+omabeam stop       # stop the server
 ```
 
-Open the printed URL on your phone (same Wi-Fi for the LAN URL, anywhere for the
-tunnel). The URL carries a token; treat it like a password.
+**One command, works anywhere.** Run `omabeam`, scan the QR, and your phone
+controls the desktop from any network — home, cell, a café. It fetches
+`cloudflared` on first run if needed and stands up a token-protected HTTPS link;
+no accounts, no port forwarding, no VPN. When a device connects you get a desktop
+notification, and `omabeam rotate` instantly kills the link and mints a new one.
+
+**Stay local instead:** `omabeam lan` serves only on your own network, never the
+internet.
+
+**Want a permanent address** (so the link never changes)? Set
+`OMABEAM_TUNNEL_TOKEN` to a Cloudflare [named-tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+token and omabeam routes through your own stable hostname; otherwise each run gets
+a fresh throwaway URL, so keep omabeam running (add it to autostart) to hold one.
 
 ## How it works
 
@@ -82,17 +96,24 @@ matches the desktop.
 
 ## Security
 
-omabeam gives whoever opens the URL full control of your desktop, so treat it
-accordingly:
+omabeam is a remote for your whole desktop, so its access model is deliberate:
 
-- The URL carries a **random token** (regenerated per session); every request is
-  checked against it in constant time. **Treat the URL like a password** — don't
-  share it or paste it where it gets logged.
-- On the LAN, the server listens on your local network only. The **tunnel** makes
-  it reachable from anywhere for as long as it runs — prefer the LAN URL for
-  routine use, and stop the tunnel when you're done.
-- The menu runs Omarchy's own commands (read from your menu files), not arbitrary
-  input from the phone; touch and keys go through `ydotool`/`wtype`.
+- **The link is the key.** It carries a 128-bit random token, checked in constant
+  time on every request, over the tunnel's HTTPS. **Treat the link like a
+  password** — don't post it or paste it where it gets logged.
+- **Revoke instantly.** `omabeam rotate` mints a new token and kills every old
+  link. Rotate if a link ever leaks, or just when you're done for the day.
+- **You see every connection.** The first request from any device pops a desktop
+  notification, so an unexpected connection is impossible to miss.
+- **Public only while it's running.** The link exists only while `omabeam` runs;
+  stop it (or `omabeam stop`) and there's nothing to reach. For local-only use,
+  `omabeam lan` never touches the internet at all.
+- **A permanent address stays yours.** `OMABEAM_TUNNEL_TOKEN` routes through a
+  Cloudflare tunnel you own, so the hostname is under your control rather than a
+  shared throwaway domain.
+- **No arbitrary execution from the phone.** The menu runs Omarchy's own commands
+  read from your menu files; touch and keys go through `ydotool`/`wtype`. The
+  server serves no files by path and takes no shell strings from the client.
 
 ## License
 

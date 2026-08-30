@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import http.server, json, subprocess, secrets, socket, urllib.parse, time, os, re, glob, shlex, shutil, hmac, sys
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PORT = int(os.environ.get("OMABEAM_PORT", "8899"))
 URLFILE = os.path.expanduser("~/.cache/omabeam/session")
 os.makedirs(os.path.dirname(URLFILE), exist_ok=True)
@@ -26,6 +26,19 @@ def load_token():
     return secrets.token_urlsafe(16)
 
 TOKEN = load_token()
+
+SEEN = set()
+def note_client(ip):
+    if ip in SEEN:
+        return
+    SEEN.add(ip)
+    print("omabeam: device connected from %s" % ip, flush=True)
+    if shutil.which("notify-send"):
+        try:
+            subprocess.Popen(["notify-send", "omabeam", "A device connected (%s)" % ip],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
 def lan_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -364,7 +377,10 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
     def ok(self, q):
         t = q.get("t", [""])[0] or ""
-        return hmac.compare_digest(t, TOKEN)
+        good = hmac.compare_digest(t, TOKEN)
+        if good:
+            note_client(self.client_address[0])
+        return good
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
@@ -462,9 +478,10 @@ def main():
     fd = os.open(URLFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(url + "\n" + TOKEN + "\n")
-    print("omabeam %s — open on your phone (same Wi-Fi):\n  %s\n" % (VERSION, url), flush=True)
+    print("omabeam %s — scan on your phone (same Wi-Fi, stays on your network):\n  %s\n" % (VERSION, url), flush=True)
     if shutil.which("qrencode"):
         subprocess.run(["qrencode", "-t", "ANSIUTF8", "-m", "2", url])
+    print("\nAway from home? 'omabeam tunnel' opens a public link. 'omabeam rotate' revokes it.", flush=True)
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H)
     try:
         srv.serve_forever()

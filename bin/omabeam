@@ -4,37 +4,103 @@ set -euo pipefail
 here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 share="$here/../share"
 [ -f "$share/omabeam-server.py" ] || share="/usr/share/omabeam"
-sess="$HOME/.cache/omabeam/session"
+cache="$HOME/.cache/omabeam"; mkdir -p "$cache"
+sess="$cache/session"; pub="$cache/public"
 port="${OMABEAM_PORT:-8899}"
+STARTED=0
 
-ensure_input() {
-  pgrep -x ydotoold >/dev/null 2>&1 || { ydotoold >/dev/null 2>&1 & disown; sleep 1; }
+ensure_input() { pgrep -x ydotoold >/dev/null 2>&1 || { ydotoold >/dev/null 2>&1 & disown; sleep 1; }; }
+server_pid()   { ss -ltnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1; }
+token()        { sed -n 2p "$sess" 2>/dev/null; }
+lan_url()      { sed -n 1p "$sess" 2>/dev/null; }
+qr()           { command -v qrencode >/dev/null && qrencode -t ANSIUTF8 -m 2 "$1" || true; }
+
+cfbin() {
+  command -v cloudflared >/dev/null && { command -v cloudflared; return; }
+  [ -x "$HOME/.local/bin/cloudflared" ] && { echo "$HOME/.local/bin/cloudflared"; return; }
+  echo ""
+}
+ensure_cloudflared() {
+  local b; b="$(cfbin)"; [ -n "$b" ] && { echo "$b"; return; }
+  local arch; case "$(uname -m)" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; *) arch=amd64;; esac
+  echo "omabeam: fetching cloudflared (one time)…" >&2
+  mkdir -p "$HOME/.local/bin"
+  curl -fsSL -o "$HOME/.local/bin/cloudflared" \
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch" >&2 \
+    || { echo "omabeam: could not download cloudflared — install it and retry." >&2; return 1; }
+  chmod +x "$HOME/.local/bin/cloudflared"; echo "$HOME/.local/bin/cloudflared"
 }
 
-case "${1:-start}" in
-  start)
+start_server_bg() {
+  ensure_input
+  if [ -z "$(server_pid)" ]; then
+    python3 "$share/omabeam-server.py" >/dev/null 2>&1 &
+    STARTED=1; sleep 2
+  fi
+}
+cleanup() { [ "$STARTED" = 1 ] && { p="$(server_pid)"; [ -n "${p:-}" ] && kill "$p" 2>/dev/null || true; }; }
+
+anywhere() {
+  rm -f "$pub"
+  start_server_bg
+  trap cleanup EXIT INT TERM
+  echo "omabeam: on your network →  $(lan_url)"
+  echo
+  echo "Opening a secure public link so you can use it from anywhere."
+  echo "It's protected by a token — treat the link like a password. Revoke anytime: omabeam rotate"
+  echo
+  local cf tok; cf="$(ensure_cloudflared)" || exit 1; tok="$(token)"
+  if [ -n "${OMABEAM_TUNNEL_TOKEN:-}" ]; then
+    echo "omabeam: starting your named tunnel (stable hostname you control)…"
+    exec "$cf" tunnel run --token "$OMABEAM_TUNNEL_TOKEN"
+  fi
+  "$cf" tunnel --url "http://localhost:$port" 2>&1 | while read -r line; do
+    u="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' <<<"$line" || true)"
+    if [ -n "$u" ]; then
+      printf '%s/?t=%s\n' "$u" "$tok" > "$pub"
+      echo "omabeam: reachable anywhere →  $u/?t=$tok"
+      qr "$u/?t=$tok"
+      command -v notify-send >/dev/null && notify-send "omabeam" "Anywhere link ready" || true
+    fi
+  done
+}
+
+case "${1:-anywhere}" in
+  anywhere) anywhere ;;
+  lan)
     ensure_input
+    pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid" 2>/dev/null || true; sleep 1; }
+    rm -f "$pub"
+    echo "omabeam: local only — reachable on your network, never the internet."
     exec python3 "$share/omabeam-server.py"
     ;;
-  tunnel)
-    command -v cloudflared >/dev/null || { echo "omabeam: cloudflared not installed" >&2; exit 1; }
-    ensure_input
-    python3 "$share/omabeam-server.py" >/dev/null 2>&1 &
-    sleep 2
-    tok="$(sed -n 2p "$sess")"
-    cloudflared tunnel --url "http://localhost:$port" 2>&1 | while read -r line; do
-      u="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' <<<"$line" || true)"
-      if [ -n "$u" ]; then
-        echo "omabeam: open  $u/?t=$tok"
-        command -v qrencode >/dev/null && qrencode -t ANSIUTF8 -m 2 "$u/?t=$tok"
-      fi
-    done
+  rotate)
+    printf 'omabeam\n%s\n' "$(python3 -c 'import secrets;print(secrets.token_urlsafe(16))')" > "$sess"
+    chmod 600 "$sess"; rm -f "$pub"
+    pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid" 2>/dev/null || true; sleep 1; }
+    echo "omabeam: link rotated — every old link is dead. Run 'omabeam' for a fresh one."
     ;;
-  url)
-    sed -n 1p "$sess" 2>/dev/null || true
+  stop)
+    pid="$(server_pid)"; [ -n "${pid:-}" ] && { kill "$pid"; echo "omabeam: stopped."; } || echo "omabeam: not running."
+    rm -f "$pub"
     ;;
-  *)
-    echo "usage: omabeam [start|tunnel|url]" >&2
-    exit 2
+  url) [ -f "$pub" ] && cat "$pub" || lan_url ;;
+  qr)  u="$([ -f "$pub" ] && cat "$pub" || lan_url)"; [ -n "$u" ] && { echo "$u"; qr "$u"; } || echo "omabeam: not running." ;;
+  -h|--help|help)
+    cat <<USAGE
+omabeam — your Omarchy desktop, on your phone (from anywhere)
+
+  omabeam            start and print a secure link that works anywhere (+ QR)
+  omabeam qr         reprint the current link + QR
+  omabeam url        print the current link
+  omabeam lan        local network only (no public link)
+  omabeam rotate     revoke the current link (new token) and restart fresh
+  omabeam stop       stop the server
+
+The link carries a token — treat it like a password. 'omabeam rotate' is your
+revoke button. For a permanent address, set OMABEAM_TUNNEL_TOKEN to a Cloudflare
+named-tunnel token and omabeam will use your own stable hostname.
+USAGE
     ;;
+  *) echo "omabeam: unknown command '$1' (try 'omabeam --help')" >&2; exit 2 ;;
 esac

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=omabeam
+Comment=Serve your Omarchy desktop to your phone
+Exec=foot -T omabeam omabeam
+Terminal=false
+Icon=preferences-desktop-remote-desktop
+Categories=Utility;Network;
+Keywords=phone;remote;bridge;omarchy;

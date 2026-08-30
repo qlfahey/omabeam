@@ -36,7 +36,8 @@ it; the section just won't appear.
 
 ## Install
 
-Omarchy / Arch:
+Omarchy / Arch — the installer resolves dependencies, installs into `~/.local`
+(no root for the app itself), and sets up input access:
 
 ```bash
 git clone https://github.com/qlfahey/omabeam.git
@@ -44,12 +45,21 @@ cd omabeam
 ./install-omarchy
 ```
 
-Dependencies: `python`, `grim`, `ydotool`, `wtype`, `hyprland`, `jq`.
-Optional: `cloudflared` (for the tunnel), an `omaspaces` install (for layouts).
+**Prebuilt package** (installs system-wide, pulls dependencies):
 
-One-time input setup (so touch and keyboard reach the desktop): add a udev rule
-so `ydotoold` can use `/dev/uinput`, and make sure your user is in the `input`
-group. The installer prints the exact commands.
+```bash
+sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.1.0/omabeam-0.1.0-1-any.pkg.tar.zst
+```
+
+Or build it yourself with `makepkg -si` (see [PKGBUILD](PKGBUILD)). AUR
+submission is prepared (`./publish-aur.sh`) and coming soon.
+
+Dependencies: `python`, `grim`, `ydotool`, `wtype`, `hyprland`, `jq`.
+Optional: `cloudflared` (public URL), `qrencode` (terminal QR), `omaspaces` (layouts).
+
+Input access is one-time: `ydotoold` needs `/dev/uinput` and your user must be in
+the `input` group. `./install-omarchy` does this for you (a udev rule + group add;
+log out and back in once). The prebuilt package prints the same steps.
 
 ## Use
 
@@ -69,6 +79,20 @@ reports window and workspace state from `hyprctl`, and turns touches into real
 input with `ydotool` and `wtype`. The menu is read from Omarchy's own
 `omarchy-menu.jsonc` and executed with the same shell actions, so it always
 matches the desktop.
+
+## Security
+
+omabeam gives whoever opens the URL full control of your desktop, so treat it
+accordingly:
+
+- The URL carries a **random token** (regenerated per session); every request is
+  checked against it in constant time. **Treat the URL like a password** — don't
+  share it or paste it where it gets logged.
+- On the LAN, the server listens on your local network only. The **tunnel** makes
+  it reachable from anywhere for as long as it runs — prefer the LAN URL for
+  routine use, and stop the tunnel when you're done.
+- The menu runs Omarchy's own commands (read from your menu files), not arbitrary
+  input from the phone; touch and keys go through `ydotool`/`wtype`.
 
 ## License
 

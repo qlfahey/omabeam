@@ -10,11 +10,13 @@ deps=(python grim ydotool wtype hyprland jq)
 missing=()
 for d in "${deps[@]}"; do command -v "$d" >/dev/null 2>&1 || missing+=("$d"); done
 if [ "${#missing[@]}" -gt 0 ]; then
-  echo "Missing: ${missing[*]}"
+  echo "Installing missing dependencies: ${missing[*]}"
   if command -v omarchy >/dev/null 2>&1; then
-    omarchy pkg add "${missing[@]}" || echo "Install them and re-run."
+    omarchy pkg add "${missing[@]}" || { echo "Install them and re-run."; exit 1; }
+  elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -S --needed "${missing[@]}"
   else
-    echo "Install them with your package manager and re-run."
+    echo "Install them with your package manager and re-run."; exit 1
   fi
 fi
 
@@ -22,13 +24,24 @@ install -Dm755 "$src/bin/omabeam" "$prefix/bin/omabeam"
 install -Dm644 "$src/share/omabeam-server.py" "$prefix/share/omabeam/omabeam-server.py"
 install -Dm644 "$src/share/phone.html" "$prefix/share/omabeam/phone.html"
 
+# Input setup: ydotoold needs /dev/uinput, and the user must be in the input group.
+rule=/etc/udev/rules.d/60-omabeam-uinput.rules
+if [ ! -f "$rule" ]; then
+  echo "Setting up /dev/uinput access (needs sudo)…"
+  echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee "$rule" >/dev/null
+  sudo udevadm control --reload-rules && sudo udevadm trigger || true
+fi
+if ! id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
+  echo "Adding $USER to the 'input' group (needs sudo; log out/in afterwards)…"
+  sudo usermod -aG input "$USER"
+  echo "  → log out and back in for group membership to take effect."
+fi
+
+case ":$PATH:" in *":$prefix/bin:"*) ;; *) echo "Note: add $prefix/bin to your PATH.";; esac
+
 echo
-echo "Installed. Make sure $prefix/bin is on your PATH."
+echo "Installed omabeam."
+echo "  omabeam         start and print the LAN URL (+ QR)"
+echo "  omabeam tunnel  also open a public URL via cloudflared"
 echo
-echo "One-time input setup (lets touch/keyboard reach the desktop):"
-echo "  echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' | sudo tee /etc/udev/rules.d/60-omabeam-uinput.rules"
-echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
-echo "  sudo usermod -aG input \"$USER\"   # then log out and back in"
-echo
-echo "Run:  omabeam         (LAN URL)"
-echo "      omabeam tunnel  (public URL via cloudflared)"
+echo "Optional: install 'cloudflared' (public URL) and 'qrencode' (terminal QR)."

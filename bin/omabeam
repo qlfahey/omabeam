@@ -24,7 +24,10 @@ case "${1:-start}" in
     tok="$(sed -n 2p "$sess")"
     cloudflared tunnel --url "http://localhost:$port" 2>&1 | while read -r line; do
       u="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' <<<"$line" || true)"
-      [ -n "$u" ] && echo "omabeam: open  $u/?t=$tok"
+      if [ -n "$u" ]; then
+        echo "omabeam: open  $u/?t=$tok"
+        command -v qrencode >/dev/null && qrencode -t ANSIUTF8 -m 2 "$u/?t=$tok"
+      fi
     done
     ;;
   url)

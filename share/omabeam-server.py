@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-import http.server, json, subprocess, secrets, socket, urllib.parse, time, os, re, glob, shlex, shutil
+import http.server, json, subprocess, secrets, socket, urllib.parse, time, os, re, glob, shlex, shutil, hmac, sys
 
+VERSION = "0.1.0"
 PORT = int(os.environ.get("OMABEAM_PORT", "8899"))
 URLFILE = os.path.expanduser("~/.cache/omabeam/session")
 os.makedirs(os.path.dirname(URLFILE), exist_ok=True)
 os.environ.setdefault("YDOTOOL_SOCKET", "%s/.ydotool_socket" % (os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()))
 HAS_OMASPACES = shutil.which("omaspaces") is not None
 
+def check_deps():
+    need = [c for c in ("hyprctl", "grim", "wtype") if not shutil.which(c)]
+    if need:
+        print("omabeam: missing required commands: %s" % ", ".join(need), file=sys.stderr)
+        sys.exit(1)
+    if not shutil.which("ydotool"):
+        print("omabeam: warning — ydotool not found; touch/keyboard input will not work", file=sys.stderr)
+
 def load_token():
     try:
-        return open(URLFILE).read().splitlines()[1].strip()
+        tok = open(URLFILE).read().splitlines()[1].strip()
+        if tok:
+            return tok
     except Exception:
-        return secrets.token_urlsafe(6)
+        pass
+    return secrets.token_urlsafe(16)
 
 TOKEN = load_token()
 
@@ -350,7 +362,9 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
-    def ok(self, q): return q.get("t", [None])[0] == TOKEN
+    def ok(self, q):
+        t = q.get("t", [""])[0] or ""
+        return hmac.compare_digest(t, TOKEN)
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
@@ -440,7 +454,24 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.send(200, {"ok": True})
         self.send(404, {"error": "nope"})
 
-url = "http://%s:%d/?t=%s" % (lan_ip(), PORT, TOKEN)
-open(URLFILE, "w").write(url + "\n" + TOKEN + "\n")
-print("URL " + url, flush=True)
-http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+def main():
+    if "--version" in sys.argv:
+        print("omabeam " + VERSION); return
+    check_deps()
+    url = "http://%s:%d/?t=%s" % (lan_ip(), PORT, TOKEN)
+    fd = os.open(URLFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(url + "\n" + TOKEN + "\n")
+    print("omabeam %s — open on your phone (same Wi-Fi):\n  %s\n" % (VERSION, url), flush=True)
+    if shutil.which("qrencode"):
+        subprocess.run(["qrencode", "-t", "ANSIUTF8", "-m", "2", url])
+    srv = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+
+if __name__ == "__main__":
+    main()

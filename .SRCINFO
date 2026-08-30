@@ -1,0 +1,20 @@
+pkgbase = omabeam
+	pkgdesc = Your Omarchy desktop, on your phone — a live phone bridge for Omarchy (Hyprland)
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/qlfahey/omabeam
+	arch = any
+	license = MIT
+	depends = python
+	depends = grim
+	depends = ydotool
+	depends = wtype
+	depends = hyprland
+	depends = jq
+	optdepends = cloudflared: public URL via a Cloudflare tunnel (omabeam tunnel)
+	optdepends = qrencode: show a scan-to-open QR code in the terminal
+	optdepends = omaspaces: open and save workspace layouts from the phone
+	source = omabeam-0.1.0.tar.gz::https://github.com/qlfahey/omabeam/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = omabeam

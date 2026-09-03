@@ -49,7 +49,7 @@ cd omabeam
 **Prebuilt package** (installs system-wide, pulls dependencies):
 
 ```bash
-sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.4.1/omabeam-0.4.1-1-any.pkg.tar.zst
+sudo pacman -U https://github.com/qlfahey/omabeam/releases/download/v0.5.0/omabeam-0.5.0-1-any.pkg.tar.zst
 ```
 
 Or build it yourself with `makepkg -si` (see [PKGBUILD](PKGBUILD)). AUR
@@ -103,7 +103,7 @@ you scan the QR once. Without setup, keep omabeam running to hold a temporary UR
 
 A small Python server captures the screen with `grim` (streamed as MJPEG),
 reports window and workspace state from `hyprctl`, and turns touches into real
-input with `ydotool` and `wtype`. The menu is read from Omarchy's own
+input with `ydotool` and `wtype`. It **auto-detects the compositor's dispatch API** (Omarchy's Lua `hl.dsp` or a stock Hyprland's classic dispatchers), so it isn't tied to one build. Run `omabeam doctor` to verify dependencies, input access, and compositor mode before first use. The menu is read from Omarchy's own
 `omarchy-menu.jsonc` and executed with the same shell actions, so it always
 matches the desktop.
 

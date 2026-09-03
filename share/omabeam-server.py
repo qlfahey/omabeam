@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import http.server, json, subprocess, secrets, socket, urllib.parse, time, os, re, glob, shlex, shutil, hmac, sys
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 PORT = int(os.environ.get("OMABEAM_PORT", "8899"))
 URLFILE = os.path.expanduser("~/.cache/omabeam/session")
 os.makedirs(os.path.dirname(URLFILE), exist_ok=True)
@@ -53,13 +53,65 @@ def hj(*a):
     except Exception:
         return None
 
-def focus_ws(n):
-    subprocess.run(["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "%s" })' % n], capture_output=True)
-
 CUR = {"addr": None, "geom": None}
 
-def dispatch(snip):
-    subprocess.run(["hyprctl", "dispatch", snip], capture_output=True)
+# --- Compositor compatibility layer -----------------------------------------
+# This Omarchy build binds `hyprctl dispatch` to a Lua parser (hl.dsp.*); a
+# stock Hyprland uses classic string dispatchers. Detect which and speak it, so
+# omabeam runs on both instead of only the machine it was written on.
+def _hypr(s):
+    return subprocess.run(["hyprctl", "dispatch", s], capture_output=True, text=True)
+
+def _detect_mode():
+    try:
+        r = _hypr('hl.dsp.exec_cmd("true")')
+        return "lua" if r.returncode == 0 and (r.stdout or "").strip() == "ok" else "classic"
+    except Exception:
+        return "classic"
+
+DISPATCH_MODE = _detect_mode()
+
+def dispatch(snip):  # raw passthrough (lua snippet); kept for lua-only call sites
+    _hypr(snip)
+
+def d_focus_ws(n):
+    _hypr('hl.dsp.focus({ workspace = "%s" })' % n) if DISPATCH_MODE == "lua" else _hypr("workspace %s" % n)
+
+def d_cursor(x, y):
+    x, y = int(round(x)), int(round(y))
+    _hypr('hl.dsp.cursor.move({ x = %d, y = %d })' % (x, y)) if DISPATCH_MODE == "lua" else _hypr("movecursor %d %d" % (x, y))
+
+def d_focus_win(a):
+    _hypr('hl.dsp.focus({ window = "address:%s" })' % a) if DISPATCH_MODE == "lua" else _hypr("focuswindow address:%s" % a)
+
+def d_close(a):
+    _hypr('hl.dsp.window.close({ window = "address:%s" })' % a) if DISPATCH_MODE == "lua" else _hypr("closewindow address:%s" % a)
+
+def d_float(a, action):  # action in {on, off, toggle}
+    if DISPATCH_MODE == "lua":
+        _hypr('hl.dsp.window.float({ window = "address:%s", action = "%s" })' % (a, action))
+    else:
+        c = client_by_addr(a); fl = bool(c and c.get("floating"))
+        if action == "toggle" or (action == "on" and not fl) or (action == "off" and fl):
+            _hypr("togglefloating address:%s" % a)
+
+def d_resize(a, w, h):
+    _hypr('hl.dsp.window.resize({ window = "address:%s", x = %d, y = %d, relative = false })' % (a, w, h)) if DISPATCH_MODE == "lua" else _hypr("resizewindowpixel exact %d %d,address:%s" % (w, h, a))
+
+def d_move(a, x, y):
+    _hypr('hl.dsp.window.move({ window = "address:%s", x = %d, y = %d, relative = false })' % (a, x, y)) if DISPATCH_MODE == "lua" else _hypr("movewindowpixel exact %d %d,address:%s" % (x, y, a))
+
+def d_fullscreen(a):
+    if DISPATCH_MODE == "lua":
+        _hypr('hl.dsp.window.fullscreen({ window = "address:%s", mode = "fullscreen" })' % a)
+    else:
+        d_focus_win(a); _hypr("fullscreen 0")
+
+def d_to_ws(a, ws):
+    _hypr('function() hl.dispatch(hl.dsp.window.move({ window = "address:%s", workspace = "%s", follow = false })) end' % (a, ws)) if DISPATCH_MODE == "lua" else _hypr("movetoworkspacesilent %s,address:%s" % (ws, a))
+
+def focus_ws(n):
+    d_focus_ws(n)
 
 def mon_primary():
     return (hj("monitors") or [{}])[0]
@@ -80,13 +132,11 @@ def shape_window(addr, pw, ph, floated):
     if CUR["geom"] == (addr, w, h, x, y):
         return
     CUR["geom"] = (addr, w, h, x, y)
-    lines = ['function()', f'  local a="address:{addr}"']
     if not floated:
-        lines.append('  hl.dispatch(hl.dsp.window.float({ window=a, action="on" }))')
-    lines += [f'  hl.dispatch(hl.dsp.window.resize({{ window=a, x={w}, y={h}, relative=false }}))',
-              f'  hl.dispatch(hl.dsp.window.move({{ window=a, x={x}, y={y}, relative=false }}))',
-              '  hl.dispatch(hl.dsp.focus({ window=a }))', 'end']
-    dispatch('\n'.join(lines))
+        d_float(addr, "on")
+    d_resize(addr, w, h)
+    d_move(addr, x, y)
+    d_focus_win(addr)
 
 def phone_enter(addr, pw, ph):
     c = client_by_addr(addr)
@@ -100,7 +150,7 @@ def phone_enter(addr, pw, ph):
     shape_window(addr, pw, ph, bool(c.get("floating")))
 
 def phone_leave(addr):
-    dispatch('hl.dsp.window.float({ window="address:%s", action="off" })' % addr)
+    d_float(addr, "off")
     CUR["addr"] = None; CUR["geom"] = None
 
 def clients():
@@ -143,7 +193,7 @@ def grab(addr=None):
     return subprocess.run(args + ["-"], capture_output=True).stdout
 
 def move(lx, ly):
-    dispatch('hl.dsp.cursor.move({ x = %d, y = %d })' % (int(round(lx)), int(round(ly))))
+    d_cursor(lx, ly)
 
 def to_screen(fx, fy, addr):
     if addr:
@@ -167,7 +217,7 @@ def scroll(dy):
     subprocess.run(["ydotool", "mousemove", "-w", "--", "0", str(int(dy))], capture_output=True)
 
 def focus_addr(addr):
-    dispatch('hl.dsp.focus({ window = "address:%s" })' % addr)
+    d_focus_win(addr)
 
 def theme():
     colors, mode = {}, "dark"
@@ -228,13 +278,12 @@ def layouts():
     return res
 
 def win_action(addr, do):
-    a = 'address:%s' % addr
-    if do == "close":  dispatch('hl.dsp.window.close({ window="%s" })' % a)
-    elif do == "float": dispatch('hl.dsp.window.float({ window="%s", action="toggle" })' % a)
-    elif do == "fs":    dispatch('hl.dsp.window.fullscreen({ window="%s", mode="fullscreen" })' % a)
+    if do == "close":   d_close(addr)
+    elif do == "float": d_float(addr, "toggle")
+    elif do == "fs":    d_fullscreen(addr)
 
 def move_win(addr, ws):
-    dispatch('function() hl.dispatch(hl.dsp.window.move({ window="address:%s", workspace="%s", follow=false })) end' % (addr, ws))
+    d_to_ws(addr, ws)
 
 OMARCHY = os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")
 MENU_DEFAULT = OMARCHY + "/default/omarchy/omarchy-menu.jsonc"
@@ -507,7 +556,7 @@ def main():
     fd = os.open(URLFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(url + "\n" + TOKEN + "\n")
-    print("omabeam %s — scan on your phone (same Wi-Fi, stays on your network):\n  %s\n" % (VERSION, url), flush=True)
+    print("omabeam %s [dispatch: %s] — scan on your phone (same Wi-Fi, stays on your network):\n  %s\n" % (VERSION, DISPATCH_MODE, url), flush=True)
     if shutil.which("qrencode"):
         subprocess.run(["qrencode", "-t", "ANSIUTF8", "-m", "2", url])
     print("\nAway from home? 'omabeam tunnel' opens a public link. 'omabeam rotate' revokes it.", flush=True)

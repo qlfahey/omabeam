@@ -187,6 +187,32 @@ case "${1:-anywhere}" in
     ;;
   url) [ -f "$pub" ] && cat "$pub" || lan_url ;;
   qr)  u="$([ -f "$pub" ] && cat "$pub" || lan_url)"; [ -n "$u" ] && { echo "$u"; qr "$u"; } || echo "omabeam: not running." ;;
+  doctor)
+    ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+    bad() { printf '  \033[31m✗\033[0m %s\n' "$1"; }
+    echo "omabeam doctor — readiness check"
+    for c in hyprctl grim wtype ydotool jq; do
+      command -v "$c" >/dev/null && ok "$c" || bad "$c is missing (install it)"
+    done
+    pgrep -x ydotoold >/dev/null 2>&1 && ok "ydotoold running" || bad "ydotoold not running (omabeam starts it automatically)"
+    if [ -e /dev/uinput ]; then
+      [ -w /dev/uinput ] && ok "/dev/uinput writable" || bad "/dev/uinput not writable — add the udev rule (see install-omarchy)"
+    else
+      bad "/dev/uinput missing — run: sudo modprobe uinput"
+    fi
+    id -nG 2>/dev/null | tr ' ' '\n' | grep -qx input && ok "user in 'input' group" \
+      || bad "not in 'input' group — sudo usermod -aG input \"$USER\", then log out and back in"
+    if [ "$(hyprctl dispatch 'hl.dsp.exec_cmd("true")' 2>/dev/null)" = ok ]; then
+      ok "compositor dispatch: lua (hl.dsp)"
+    else
+      ok "compositor dispatch: classic hyprctl"
+    fi
+    n="$(hyprctl monitors -j 2>/dev/null | jq 'length' 2>/dev/null || echo 1)"
+    [ "${n:-1}" -gt 1 ] && bad "multi-monitor ($n) — omabeam targets the primary only for now" || ok "single monitor"
+    for c in cloudflared qrencode omaspaces; do
+      { command -v "$c" >/dev/null || [ -x "$HOME/.local/bin/$c" ]; } && ok "$c (optional)" || echo "  · $c (optional) not installed"
+    done
+    ;;
   -h|--help|help)
     cat <<USAGE
 omabeam — your Omarchy desktop, on your phone (from anywhere)
@@ -198,6 +224,7 @@ omabeam — your Omarchy desktop, on your phone (from anywhere)
   omabeam lan        local network only (no public link)
   omabeam rotate     revoke the current link (new token) and restart fresh
   omabeam stop       stop the server
+  omabeam doctor     check dependencies + input + compositor readiness
 
 Without setup, each run gets a fresh temporary URL. After 'omabeam setup' the
 link is permanent — bookmark it once. The link carries a token; treat it like a
